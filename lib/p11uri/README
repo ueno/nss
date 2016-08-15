@@ -1,0 +1,18 @@
+The following files are taken from p11-kit 0.23.5.
+
+- attrs.[ch]
+- buffer.[ch]
+- uri.[ch]
+- url.[ch]
+
+Local changes:
+
+- "config.h" inclusion is guarded with HAVE_CONFIG_H
+
+- attrs.[ch]
+  * p11_attr{,s}_to_string, p11_attr{,s}_format, p11_attr_hash are not
+    compiled, because it requires extra dependencies
+- uri.c
+  * The support for vendor query attributes are disabled, because it
+    requires dependency on the hash table implementation in p11-kit.
+  * call to p11_debug is commented out, because it does I/O.
