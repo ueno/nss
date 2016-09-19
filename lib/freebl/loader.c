@@ -2135,3 +2135,15 @@ PBKDF2_HMAC(const SECHashObject *hashobj,
         hashobj, password, passwordLen, salt, saltLen, iterations,
 	dk, dkLen);
 }
+
+SECStatus
+SCRYPT_Hash(const SCRYPTParams *params,
+	    const unsigned char *password, unsigned int passwordLen,
+	    const unsigned char *salt, unsigned int saltLen,
+	    unsigned char *dk, unsigned int dkLen)
+{
+    if (!vector && PR_SUCCESS != freebl_RunLoaderOnce())
+        return SECFailure;
+    return (vector->p_SCRYPT_Hash)(
+        params, password, passwordLen, salt, saltLen, dk, dkLen);
+}

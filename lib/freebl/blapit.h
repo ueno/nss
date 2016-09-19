@@ -400,6 +400,13 @@ struct ECPrivateKeyStr {
 };
 typedef struct ECPrivateKeyStr ECPrivateKey;
 
+struct SCRYPTParamsStr {
+    unsigned int blockSize;
+    unsigned int cost;
+    unsigned int parallelization;
+};
+typedef struct SCRYPTParamsStr SCRYPTParams;
+
 typedef void *(*BLapiAllocateFunc)(void);
 typedef void (*BLapiDestroyContextFunc)(void *cx, PRBool freeit);
 typedef SECStatus (*BLapiInitContextFunc)(void *cx,

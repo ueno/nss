@@ -95,6 +95,7 @@ PRIVATE_EXPORTS = \
 	ecl.h \
 	ecl-curve.h \
 	pbkdf2.h \
+	scrypt.h \
 	$(NULL)
 
 MPI_HDRS = mpi-config.h mpi.h mpi-priv.h mplogic.h mpprime.h logtab.h mp_gf2m.h
@@ -155,6 +156,8 @@ CSRCS = \
 	seed.c \
 	jpake.c \
 	pbkdf2.c \
+	salsa20.c \
+	scrypt.c \
 	$(MPI_SRCS) \
 	$(MPCPU_SRCS) \
 	$(ECL_SRCS) \

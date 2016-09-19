@@ -738,6 +738,12 @@ struct FREEBLVectorStr {
         int iterations,
         unsigned char *dk, unsigned int dkLen);
 
+    SECStatus (*p_SCRYPT_Hash)(
+        const SCRYPTParams *params,
+        const unsigned char *password, unsigned int passwordLen,
+        const unsigned char *salt, unsigned int saltLen,
+        unsigned char *dk, unsigned int dkLen);
+
     /* Add new function pointers at the end of this struct and bump
      * FREEBL_VERSION at the beginning of this file. */
 };

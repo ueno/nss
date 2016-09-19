@@ -14,6 +14,7 @@ extern int FREEBL_InitStubs(void);
 #include "hmacct.h"
 #include "blapii.h"
 #include "pbkdf2.h"
+#include "scrypt.h"
 
 static const struct FREEBLVectorStr vector =
     {
@@ -299,7 +300,8 @@ static const struct FREEBLVectorStr vector =
 
       /* End of Version 3.018 */
 
-      PBKDF2_HMAC
+      PBKDF2_HMAC,
+      SCRYPT_Hash
     };
 
 const FREEBLVector*
