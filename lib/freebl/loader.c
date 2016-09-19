@@ -2121,3 +2121,17 @@ ChaCha20Poly1305_Open(const ChaCha20Poly1305Context *ctx,
         ctx, output, outputLen, maxOutputLen, input, inputLen,
         nonce, nonceLen, ad, adLen);
 }
+
+SECStatus
+PBKDF2_HMAC(const SECHashObject *hashobj,
+	    const unsigned char *password, unsigned int passwordLen,
+	    const unsigned char *salt, unsigned int saltLen,
+	    int iterations,
+	    unsigned char *dk, unsigned int dkLen)
+{
+    if (!vector && PR_SUCCESS != freebl_RunLoaderOnce())
+        return SECFailure;
+    return (vector->p_PBKDF2_HMAC)(
+        hashobj, password, passwordLen, salt, saltLen, iterations,
+	dk, dkLen);
+}

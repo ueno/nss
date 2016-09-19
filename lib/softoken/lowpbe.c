@@ -16,6 +16,7 @@
 #include "lowpbe.h"
 #include "secoid.h"
 #include "alghmac.h"
+#include "pbkdf2.h"
 #include "softoken.h"
 #include "secerr.h"
 
@@ -300,66 +301,6 @@ nsspkcs5_PBKDF1Extended(const SECHashObject *hashObj,
 /*
  * PBDKDF2 is PKCS #5 v2.0 it's currently not used by NSS
  */
-static void
-do_xor(unsigned char *dest, unsigned char *src, int len)
-{
-    /* use byt xor, not all platforms are happy about inaligned
-     * integer fetches */
-    while (len--) {
-        *dest = *dest ^ *src;
-        dest++;
-        src++;
-    }
-}
-
-static SECStatus
-nsspkcs5_PBKDF2_F(const SECHashObject *hashobj, SECItem *pwitem, SECItem *salt,
-                  int iterations, unsigned int i, unsigned char *T)
-{
-    int j;
-    HMACContext *cx = NULL;
-    unsigned int hLen = hashobj->length;
-    SECStatus rv = SECFailure;
-    unsigned char *last = NULL;
-    unsigned int lastLength = salt->len + 4;
-    unsigned int lastBufLength;
-
-    cx = HMAC_Create(hashobj, pwitem->data, pwitem->len, PR_FALSE);
-    if (cx == NULL) {
-        goto loser;
-    }
-    PORT_Memset(T, 0, hLen);
-    lastBufLength = PR_MAX(lastLength, hLen);
-    last = PORT_Alloc(lastBufLength);
-    if (last == NULL) {
-        goto loser;
-    }
-    PORT_Memcpy(last, salt->data, salt->len);
-    last[salt->len] = (i >> 24) & 0xff;
-    last[salt->len + 1] = (i >> 16) & 0xff;
-    last[salt->len + 2] = (i >> 8) & 0xff;
-    last[salt->len + 3] = i & 0xff;
-
-    /* NOTE: we need at least one iteration to return success! */
-    for (j = 0; j < iterations; j++) {
-        HMAC_Begin(cx);
-        HMAC_Update(cx, last, lastLength);
-        rv = HMAC_Finish(cx, last, &lastLength, hLen);
-        if (rv != SECSuccess) {
-            break;
-        }
-        do_xor(T, last, hLen);
-    }
-loser:
-    if (cx) {
-        HMAC_Destroy(cx, PR_TRUE);
-    }
-    if (last) {
-        PORT_ZFree(last, lastBufLength);
-    }
-    return rv;
-}
-
 static SECItem *
 nsspkcs5_PBKDF2(const SECHashObject *hashobj, NSSPKCS5PBEParameter *pbe_param,
                 SECItem *pwitem)
@@ -367,42 +308,23 @@ nsspkcs5_PBKDF2(const SECHashObject *hashobj, NSSPKCS5PBEParameter *pbe_param,
     int iterations = pbe_param->iter;
     int bytesNeeded = pbe_param->keyLen;
     unsigned int dkLen = bytesNeeded;
-    unsigned int hLen = hashobj->length;
-    unsigned int nblocks = (dkLen + hLen - 1) / hLen;
-    unsigned int i;
-    unsigned char *rp;
-    unsigned char *T = NULL;
     SECItem *result = NULL;
     SECItem *salt = &pbe_param->salt;
     SECStatus rv = SECFailure;
 
-    result = SECITEM_AllocItem(NULL, NULL, nblocks * hLen);
+    result = SECITEM_AllocItem(NULL, NULL, dkLen);
     if (result == NULL) {
         return NULL;
     }
 
-    T = PORT_Alloc(hLen);
-    if (T == NULL) {
-        goto loser;
-    }
-
-    for (i = 1, rp = result->data; i <= nblocks; i++, rp += hLen) {
-        rv = nsspkcs5_PBKDF2_F(hashobj, pwitem, salt, iterations, i, T);
-        if (rv != SECSuccess) {
-            break;
-        }
-        PORT_Memcpy(rp, T, hLen);
-    }
-
-loser:
-    if (T) {
-        PORT_ZFree(T, hLen);
-    }
+    rv = PBKDF2_HMAC(hashobj,
+                     pwitem->data, pwitem->len,
+                     salt->data, salt->len,
+                     iterations,
+                     result->data, dkLen);
     if (rv != SECSuccess) {
         SECITEM_FreeItem(result, PR_TRUE);
         result = NULL;
-    } else {
-        result->len = dkLen;
     }
 
     return result;

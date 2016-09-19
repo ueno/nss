@@ -732,6 +732,12 @@ struct FREEBLVectorStr {
 
     /* Version 3.018 came to here */
 
+    SECStatus (*p_PBKDF2_HMAC)(const SECHashObject *hashobj,
+        const unsigned char *password, unsigned int passwordLen,
+        const unsigned char *salt, unsigned int saltLen,
+        int iterations,
+        unsigned char *dk, unsigned int dkLen);
+
     /* Add new function pointers at the end of this struct and bump
      * FREEBL_VERSION at the beginning of this file. */
 };
