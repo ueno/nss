@@ -11,6 +11,7 @@
 #include "cert.h"
 #include "keyhi.h"
 #include "pk11pub.h"
+#include "pkcs11uri.h"
 
 struct ScopedDelete {
   void operator()(CERTCertificate* cert) { CERT_DestroyCertificate(cert); }
@@ -31,6 +32,7 @@ struct ScopedDelete {
   void operator()(SECKEYPrivateKeyList* list) {
     SECKEY_DestroyPrivateKeyList(list);
   }
+  void operator()(PK11URI* uri) { PK11URI_DestroyURI(uri); }
 };
 
 template <class T>
@@ -57,6 +59,7 @@ SCOPED(SECItem);
 SCOPED(SECKEYPublicKey);
 SCOPED(SECKEYPrivateKey);
 SCOPED(SECKEYPrivateKeyList);
+SCOPED(PK11URI);
 
 #undef SCOPED
 
