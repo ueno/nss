@@ -22,10 +22,11 @@ struct SGNContextStr {
     void *hashcx;
     const SECHashObject *hashobj;
     SECKEYPrivateKey *key;
+    SECItem *params;
 };
 
-SGNContext *
-SGN_NewContext(SECOidTag alg, SECKEYPrivateKey *key)
+static SGNContext *
+sgn_NewContext(SECOidTag alg, SECItem *params, SECKEYPrivateKey *key)
 {
     SGNContext *cx;
     SECOidTag hashalg, signalg;
@@ -40,7 +41,7 @@ SGN_NewContext(SECOidTag alg, SECKEYPrivateKey *key)
      * it may just support CKM_SHA1_RSA_PKCS and/or CKM_MD5_RSA_PKCS.
      */
     /* we have a private key, not a public key, so don't pass it in */
-    rv = sec_DecodeSigAlg(NULL, alg, NULL, &signalg, &hashalg);
+    rv = sec_DecodeSigAlg(NULL, alg, params, &signalg, &hashalg);
     if (rv != SECSuccess) {
         PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
         return 0;
@@ -49,7 +50,8 @@ SGN_NewContext(SECOidTag alg, SECKEYPrivateKey *key)
 
     /* verify our key type */
     if (key->keyType != keyType &&
-        !((key->keyType == dsaKey) && (keyType == fortezzaKey))) {
+        !((key->keyType == dsaKey) && (keyType == fortezzaKey)) &&
+        !((key->keyType == rsaKey) && (keyType == rsaPssKey))) {
         PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
         return 0;
     }
@@ -59,8 +61,22 @@ SGN_NewContext(SECOidTag alg, SECKEYPrivateKey *key)
         cx->hashalg = hashalg;
         cx->signalg = signalg;
         cx->key = key;
+        cx->params = params;
     }
     return cx;
+}
+
+SGNContext *
+SGN_NewContext(SECOidTag alg, SECKEYPrivateKey *key)
+{
+    return sgn_NewContext(alg, NULL, key);
+}
+
+SGNContext *
+SGN_NewContextWithAlgorithmID(SECAlgorithmID *alg, SECKEYPrivateKey *key)
+{
+    SECOidTag tag = SECOID_GetAlgorithmTag(alg);
+    return sgn_NewContext(tag, &alg->parameters, key);
 }
 
 void
@@ -229,18 +245,14 @@ loser:
 
 /************************************************************************/
 
-/*
-** Sign a block of data returning in result a bunch of bytes that are the
-** signature. Returns zero on success, an error code on failure.
-*/
-SECStatus
-SEC_SignData(SECItem *res, const unsigned char *buf, int len,
-             SECKEYPrivateKey *pk, SECOidTag algid)
+static SECStatus
+sec_SignData(SECItem *res, const unsigned char *buf, int len,
+             SECKEYPrivateKey *pk, SECOidTag algid, SECItem *params)
 {
     SECStatus rv;
     SGNContext *sgn;
 
-    sgn = SGN_NewContext(algid, pk);
+    sgn = sgn_NewContext(algid, params, pk);
 
     if (sgn == NULL)
         return SECFailure;
@@ -258,6 +270,25 @@ SEC_SignData(SECItem *res, const unsigned char *buf, int len,
 loser:
     SGN_DestroyContext(sgn, PR_TRUE);
     return rv;
+}
+
+/*
+** Sign a block of data returning in result a bunch of bytes that are the
+** signature. Returns zero on success, an error code on failure.
+*/
+SECStatus
+SEC_SignData(SECItem *res, const unsigned char *buf, int len,
+             SECKEYPrivateKey *pk, SECOidTag algid)
+{
+    return sec_SignData(res, buf, len, pk, algid, NULL);
+}
+
+SECStatus
+SEC_SignDataWithAlgorithmID(SECItem *res, const unsigned char *buf, int len,
+                            SECKEYPrivateKey *pk, SECAlgorithmID *algid)
+{
+    SECOidTag tag = SECOID_GetAlgorithmTag(algid);
+    return sec_SignData(res, buf, len, pk, tag, &algid->parameters);
 }
 
 /************************************************************************/
@@ -294,10 +325,10 @@ const SEC_ASN1Template CERT_SignedDataTemplate[] =
 
 SEC_ASN1_CHOOSER_IMPLEMENT(CERT_SignedDataTemplate)
 
-SECStatus
-SEC_DerSignData(PLArenaPool *arena, SECItem *result,
+static SECStatus
+sec_DerSignData(PLArenaPool *arena, SECItem *result,
                 const unsigned char *buf, int len, SECKEYPrivateKey *pk,
-                SECOidTag algID)
+                SECOidTag algID, SECItem *params)
 {
     SECItem it;
     CERTSignedData sd;
@@ -339,7 +370,7 @@ SEC_DerSignData(PLArenaPool *arena, SECItem *result,
     }
 
     /* Sign input buffer */
-    rv = SEC_SignData(&it, buf, len, pk, algID);
+    rv = sec_SignData(&it, buf, len, pk, algID, params);
     if (rv)
         goto loser;
 
@@ -349,7 +380,7 @@ SEC_DerSignData(PLArenaPool *arena, SECItem *result,
     sd.data.len = len;
     sd.signature.data = it.data;
     sd.signature.len = it.len << 3; /* convert to bit string */
-    rv = SECOID_SetAlgorithmID(arena, &sd.signatureAlgorithm, algID, 0);
+    rv = SECOID_SetAlgorithmID(arena, &sd.signatureAlgorithm, algID, params);
     if (rv)
         goto loser;
 
@@ -360,6 +391,24 @@ SEC_DerSignData(PLArenaPool *arena, SECItem *result,
 loser:
     PORT_Free(it.data);
     return rv;
+}
+
+SECStatus
+SEC_DerSignData(PLArenaPool *arena, SECItem *result,
+                const unsigned char *buf, int len, SECKEYPrivateKey *pk,
+                SECOidTag algID)
+{
+    return sec_DerSignData(arena, result, buf, len, pk, algID, NULL);
+}
+
+SECStatus
+SEC_DerSignDataWithAlgorithmID(PLArenaPool *arena, SECItem *result,
+                               const unsigned char *buf, int len,
+                               SECKEYPrivateKey *pk,
+                               SECAlgorithmID *algID)
+{
+    SECOidTag tag = SECOID_GetAlgorithmTag(algID);
+    return sec_DerSignData(arena, result, buf, len, pk, tag, &algID->parameters);
 }
 
 SECStatus
