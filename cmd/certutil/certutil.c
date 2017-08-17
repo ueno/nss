@@ -194,6 +194,7 @@ CertReq(SECKEYPrivateKey *privk, SECKEYPublicKey *pubk, KeyType keyType,
     PLArenaPool *arena;
     void *extHandle;
     SECItem signedReq = { siBuffer, NULL, 0 };
+    SECAlgorithmID signAlg;
 
     arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
     if (!arena) {
@@ -256,16 +257,41 @@ CertReq(SECKEYPrivateKey *privk, SECKEYPublicKey *pubk, KeyType keyType,
         return SECFailure;
     }
 
-    /* Sign the request */
-    signAlgTag = SEC_GetSignatureAlgorithmOidTag(keyType, hashAlgTag);
-    if (signAlgTag == SEC_OID_UNKNOWN) {
+    PORT_Memset(&signAlg, 0, sizeof(signAlg));
+    if (pssCertificate) {
+        rv = SECOID_SetAlgorithmID(arena, &signAlg,
+                                   SEC_OID_PKCS1_RSA_PSS_SIGNATURE, 0);
+        if (rv != SECSuccess) {
+            PORT_FreeArena(arena, PR_FALSE);
+            SECU_PrintError(progName, "unable to set algorithm ID");
+            return SECFailure;
+        }
+    } else {
+        signAlgTag = SEC_GetSignatureAlgorithmOidTag(keyType, hashAlgTag);
+        if (signAlgTag == SEC_OID_UNKNOWN) {
+            PORT_FreeArena(arena, PR_FALSE);
+            SECU_PrintError(progName, "unknown Key or Hash type");
+            return SECFailure;
+        }
+        rv = SECOID_SetAlgorithmID(arena, &signAlg, signAlgTag, 0);
+        if (rv != SECSuccess) {
+            PORT_FreeArena(arena, PR_FALSE);
+            SECU_PrintError(progName, "unable to set algorithm ID");
+            return SECFailure;
+        }
+    }
+    rv = SGN_FillAlgorithmParameters(arena, &signAlg.parameters,
+                                     privk, &signAlg);
+    if (rv != SECSuccess) {
         PORT_FreeArena(arena, PR_FALSE);
-        SECU_PrintError(progName, "unknown Key or Hash type");
+        SECU_PrintError(progName, "setting signature parameters failed");
         return SECFailure;
     }
 
-    rv = SEC_DerSignData(arena, &signedReq, encoding->data, encoding->len,
-                         privk, signAlgTag);
+    /* Sign the request */
+    rv = SEC_DerSignDataWithAlgorithmID(arena, &signedReq,
+                                        encoding->data, encoding->len,
+                                        privk, &signAlg);
     if (rv) {
         PORT_FreeArena(arena, PR_FALSE);
         SECU_PrintError(progName, "signing of data failed");
@@ -1899,16 +1925,21 @@ SignCert(CERTCertDBHandle *handle, CERTCertificate *cert, PRBool selfsign,
     SECStatus rv;
     PLArenaPool *arena;
     SECOidTag algID;
+    CERTCertificate *issuer;
+    SECAlgorithmID *signAlg;
     void *dummy;
 
-    if (!selfsign) {
-        CERTCertificate *issuer = PK11_FindCertFromNickname(issuerNickName, pwarg);
+    arena = cert->arena;
+
+    if (selfsign) {
+        issuer = cert;
+    } else {
+        issuer = PK11_FindCertFromNickname(issuerNickName, pwarg);
         if ((CERTCertificate *)NULL == issuer) {
             SECU_PrintError(progName, "unable to find issuer with nickname %s",
                             issuerNickName);
             return SECFailure;
         }
-
         privKey = caPrivateKey = PK11_FindKeyByAnyCert(issuer, pwarg);
         CERT_DestroyCertificate(issuer);
         if (caPrivateKey == NULL) {
@@ -1917,19 +1948,27 @@ SignCert(CERTCertDBHandle *handle, CERTCertificate *cert, PRBool selfsign,
         }
     }
 
-    arena = cert->arena;
-
-    algID = SEC_GetSignatureAlgorithmOidTag(privKey->keyType, hashAlgTag);
-    if (algID == SEC_OID_UNKNOWN) {
-        fprintf(stderr, "Unknown key or hash type for issuer.");
-        rv = SECFailure;
-        goto done;
-    }
-
-    rv = SECOID_SetAlgorithmID(arena, &cert->signature, algID, 0);
-    if (rv != SECSuccess) {
-        fprintf(stderr, "Could not set signature algorithm id.");
-        goto done;
+    signAlg = &issuer->subjectPublicKeyInfo.algorithm;
+    if (SECOID_GetAlgorithmTag(signAlg) == SEC_OID_PKCS1_RSA_PSS_SIGNATURE) {
+        rv = SECOID_SetAlgorithmID(arena, &cert->signature,
+                                   SEC_OID_PKCS1_RSA_PSS_SIGNATURE,
+                                   &signAlg->parameters);
+        if (rv != SECSuccess) {
+            fprintf(stderr, "Could not set signature algorithm id.");
+            goto done;
+        }
+    } else {
+        algID = SEC_GetSignatureAlgorithmOidTag(privKey->keyType, hashAlgTag);
+        if (algID == SEC_OID_UNKNOWN) {
+            fprintf(stderr, "Unknown key or hash type for issuer.");
+            rv = SECFailure;
+            goto done;
+        }
+        rv = SECOID_SetAlgorithmID(arena, &cert->signature, algID, 0);
+        if (rv != SECSuccess) {
+            fprintf(stderr, "Could not set signature algorithm id.");
+            goto done;
+        }
     }
 
     switch (certVersion) {
@@ -1960,7 +1999,15 @@ SignCert(CERTCertDBHandle *handle, CERTCertificate *cert, PRBool selfsign,
         goto done;
     }
 
-    rv = SEC_DerSignData(arena, &cert->derCert, der.data, der.len, privKey, algID);
+    rv = SGN_FillAlgorithmParameters(arena, &cert->signature.parameters,
+                                     privKey, &cert->signature);
+    if (rv != SECSuccess) {
+        PORT_FreeArena(arena, PR_FALSE);
+        SECU_PrintError(progName, "setting signature parameters failed");
+        return SECFailure;
+    }
+    rv = SEC_DerSignDataWithAlgorithmID(arena, &cert->derCert, der.data, der.len,
+                                        privKey, &cert->signature);
     if (rv != SECSuccess) {
         fprintf(stderr, "Could not sign encoded certificate data.\n");
         /* result allocated out of the arena, it will be freed
