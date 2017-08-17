@@ -172,7 +172,8 @@ SGN_End(SGNContext *cx, SECItem *result)
     }
     (*cx->hashobj->end)(cx->hashcx, digest, &part1, sizeof(digest));
 
-    if (privKey->keyType == rsaKey) {
+    if (privKey->keyType == rsaKey &&
+        cx->signalg != SEC_OID_PKCS1_RSA_PSS_SIGNATURE) {
 
         arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
         if (!arena) {
@@ -216,11 +217,45 @@ SGN_End(SGNContext *cx, SECItem *result)
         goto loser;
     }
 
-    rv = PK11_Sign(privKey, &sigitem, &digder);
-    if (rv != SECSuccess) {
-        PORT_Free(sigitem.data);
-        sigitem.data = NULL;
-        goto loser;
+    if (cx->signalg == SEC_OID_PKCS1_RSA_PSS_SIGNATURE) {
+        CK_RSA_PKCS_PSS_PARAMS mech;
+        SECItem mechItem = { siBuffer, (unsigned char *)&mech, sizeof(mech) };
+
+        PORT_Memset(&mech, 0, sizeof(CK_RSA_PKCS_PSS_PARAMS));
+
+        if (cx->params && cx->params->data) {
+            SECKEYRSAPSSParams params;
+
+            arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
+            if (!arena) {
+                rv = SECFailure;
+                goto loser;
+            }
+            rv = SEC_QuickDERDecodeItem(arena, &params,
+                                        SEC_ASN1_GET(SECKEY_RSAPSSParamsTemplate),
+                                        cx->params);
+            if (rv != SECSuccess) {
+                goto loser;
+            }
+            rv = sec_RSAPSSParamsToMechanism(&mech, &params);
+            if (rv != SECSuccess) {
+                goto loser;
+            }
+        } else {
+            mech.hashAlg = CKM_SHA_1;
+            mech.mgf = CKG_MGF1_SHA1;
+	    mech.sLen = digder.len;
+	}
+        rv = PK11_SignWithMechanism(privKey, CKM_RSA_PKCS_PSS, &mechItem,
+                                    &sigitem, &digder);
+        if (rv != SECSuccess) {
+            goto loser;
+        }
+    } else {
+	rv = PK11_Sign(privKey, &sigitem, &digder);
+        if (rv != SECSuccess) {
+            goto loser;
+        }
     }
 
     if ((cx->signalg == SEC_OID_ANSIX9_DSA_SIGNATURE) ||
@@ -557,4 +592,100 @@ SEC_GetSignatureAlgorithmOidTag(KeyType keyType, SECOidTag hashAlgTag)
             break;
     }
     return sigTag;
+}
+
+static CK_MECHANISM_TYPE
+sec_GetHashMechanismByOidTag(SECOidTag tag)
+{
+    switch (tag) {
+        case SEC_OID_SHA512:
+            return CKM_SHA512;
+        case SEC_OID_SHA384:
+            return CKM_SHA384;
+        case SEC_OID_SHA256:
+            return CKM_SHA256;
+        default:
+            PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
+            /* fallthrough */
+        case SEC_OID_SHA1:
+            break;
+    }
+    return CKM_SHA_1;
+}
+
+static CK_RSA_PKCS_MGF_TYPE
+sec_GetMgfTypeByOidTag(SECOidTag tag)
+{
+    switch (tag) {
+        case SEC_OID_SHA512:
+            return CKG_MGF1_SHA512;
+        case SEC_OID_SHA384:
+            return CKG_MGF1_SHA384;
+        case SEC_OID_SHA256:
+            return CKG_MGF1_SHA256;
+        default:
+            PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
+            /* fallthrough */
+        case SEC_OID_SHA1:
+            break;
+    }
+    return CKG_MGF1_SHA1;
+}
+
+SECStatus
+sec_RSAPSSParamsToMechanism(CK_RSA_PKCS_PSS_PARAMS *mech,
+                            const SECKEYRSAPSSParams *params)
+{
+    PLArenaPool *arena;
+    SECStatus rv = SECSuccess;
+    SECOidTag hashAlgTag;
+    unsigned long saltLength;
+
+    arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
+    if (!arena) {
+        return SECFailure;
+    }
+
+    PORT_Memset(mech, 0, sizeof(CK_RSA_PKCS_PSS_PARAMS));
+
+    if (params->hashAlg) {
+        hashAlgTag = SECOID_GetAlgorithmTag(params->hashAlg);
+    } else {
+        hashAlgTag = SEC_OID_SHA1; /* default, SHA-1 */
+    }
+    mech->hashAlg = sec_GetHashMechanismByOidTag(hashAlgTag);
+
+    if (params->maskAlg) {
+        SECOidTag maskAlgTag = SECOID_GetAlgorithmTag(params->maskAlg);
+        SECAlgorithmID maskHashAlg;
+        SECOidTag maskHashAlgTag;
+        if (maskAlgTag != SEC_OID_PKCS1_MGF1) {
+            /* only MGF1 is known to PKCS#11 */
+            PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
+            rv = SECFailure;
+            goto loser;
+        }
+        rv = SEC_QuickDERDecodeItem(arena, &maskHashAlg,
+                                    SEC_ASN1_GET(SECOID_AlgorithmIDTemplate),
+                                    &params->maskAlg->parameters);
+        if (rv != SECSuccess) {
+            goto loser;
+        }
+        maskHashAlgTag = SECOID_GetAlgorithmTag(&maskHashAlg);
+        mech->mgf = sec_GetMgfTypeByOidTag(maskHashAlgTag);
+    } else {
+        mech->mgf = CKG_MGF1_SHA1; /* default, MGF1 with SHA-1 */
+    }
+
+    rv = SEC_ASN1DecodeInteger((SECItem *)&params->saltLength, &saltLength);
+    if (rv != SECSuccess) {
+        goto loser;
+    }
+    mech->sLen = saltLength;
+
+loser:
+    if (arena != NULL) {
+        PORT_FreeArena(arena, PR_FALSE);
+    }
+    return rv;
 }
