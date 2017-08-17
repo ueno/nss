@@ -250,8 +250,45 @@ sec_DecodeSigAlg(const SECKEYPublicKey *key, SECOidTag sigAlg,
             *hashalg = SEC_OID_SHA1;
             break;
         case SEC_OID_PKCS1_RSA_ENCRYPTION:
-        case SEC_OID_PKCS1_RSA_PSS_SIGNATURE:
             *hashalg = SEC_OID_UNKNOWN; /* get it from the RSA signature */
+            break;
+        case SEC_OID_PKCS1_RSA_PSS_SIGNATURE:
+            if (!param || !param->data) {
+                /* if param it not given, guess best possible
+                 * algorithm for the public key */
+                len = SECKEY_PublicKeyStrength(key);
+                if (len <= 16) {
+                    *hashalg = SEC_OID_SHA256;
+                } else if (len <= 24) {
+                    *hashalg = SEC_OID_SHA384;
+                } else {
+                    *hashalg = SEC_OID_SHA512;
+                }
+            } else {
+                SECKEYRSAPSSParams pssParam;
+                arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
+                if (arena == NULL) {
+                    return SECFailure;
+                }
+                PORT_Memset(&pssParam, 0, sizeof pssParam);
+                rv = SEC_QuickDERDecodeItem(arena, &pssParam,
+                                            SEC_ASN1_GET(SECKEY_RSAPSSParamsTemplate),
+                                            param);
+                if (rv != SECSuccess) {
+                    return rv;
+                }
+                if (pssParam.hashAlg) {
+                    *hashalg = SECOID_GetAlgorithmTag(pssParam.hashAlg);
+                } else {
+                    *hashalg = SEC_OID_SHA1; /* default, SHA-1 */
+                }
+                PORT_FreeArena(arena, PR_FALSE);
+                /* only accept hash algorithms */
+                if (HASH_GetHashTypeByOidTag(*hashalg) == HASH_AlgNULL) {
+                    /* error set by HASH_GetHashTypeByOidTag */
+                    return SECFailure;
+                }
+            }
             break;
 
         case SEC_OID_ANSIX962_ECDSA_SHA224_SIGNATURE:
