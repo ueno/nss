@@ -188,6 +188,16 @@ extern void SEC_DestroySignedData(CERTSignedData *sd, PRBool freeit);
 extern SECOidTag SEC_GetSignatureAlgorithmOidTag(KeyType keyType,
                                                  SECOidTag hashAlgTag);
 
+/*
+** Fill in the algorithm parameters used for signing, based on the
+** informatinon supplied from a private key and an algorithm ID of the
+** public key.
+*/
+extern SECStatus SGN_FillAlgorithmParameters(PLArenaPool *arena,
+                                             SECItem *params,
+                                             const SECKEYPrivateKey *key,
+                                             const SECAlgorithmID *algid);
+
 /****************************************/
 /*
 ** Signature verification operations

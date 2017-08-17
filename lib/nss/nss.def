@@ -1120,6 +1120,7 @@ PK11_GetTokenURI;
 SGN_NewContextWithAlgorithmID;
 SEC_SignDataWithAlgorithmID;
 SEC_DerSignDataWithAlgorithmID;
+SGN_FillAlgorithmParameters;
 ;+    local:
 ;+       *;
 ;+};

@@ -689,3 +689,92 @@ loser:
     }
     return rv;
 }
+
+SECStatus
+SGN_FillAlgorithmParameters(PLArenaPool *arena,
+                            SECItem *params,
+                            const SECKEYPrivateKey *key,
+                            const SECAlgorithmID *algID)
+{
+    SECOidTag hashAlgTag;
+    SECKEYRSAPSSParams pssParams;
+    int modBytes;
+    SECStatus rv = SECSuccess;
+
+    if (SECOID_GetAlgorithmTag(algID) != SEC_OID_PKCS1_RSA_PSS_SIGNATURE) {
+        return SECITEM_CopyItem(arena, params, &algID->parameters);
+    }
+
+    PORT_Memset(&pssParams, 0, sizeof(pssParams));
+
+    if (algID->parameters.data) {
+        rv = SEC_QuickDERDecodeItem(arena, &pssParams,
+                                    SEC_ASN1_GET(SECKEY_RSAPSSParamsTemplate),
+                                    &algID->parameters);
+        if (rv != SECSuccess) {
+            return rv;
+        }
+    }
+
+    modBytes = PK11_GetPrivateModulusLen((SECKEYPrivateKey *)key);
+
+    if (!pssParams.hashAlg) {
+        if (modBytes <= 16) {
+            hashAlgTag = SEC_OID_SHA256;
+        } else if (modBytes <= 24) {
+            hashAlgTag = SEC_OID_SHA384;
+        } else {
+            hashAlgTag = SEC_OID_SHA512;
+        }
+        pssParams.hashAlg = PORT_ArenaZAlloc(arena, sizeof(SECAlgorithmID));
+        if (!pssParams.hashAlg) {
+            return SECFailure;
+        }
+        rv = SECOID_SetAlgorithmID(arena, pssParams.hashAlg, hashAlgTag, NULL);
+        if (rv != SECSuccess) {
+            return rv;
+        }
+    }
+
+    if (!pssParams.maskAlg) {
+        SECItem *hashAlgItem;
+
+        hashAlgItem = SEC_ASN1EncodeItem(arena, NULL, pssParams.hashAlg,
+                                         SECOID_AlgorithmIDTemplate);
+        if (!hashAlgItem) {
+            return rv;
+        }
+        pssParams.maskAlg = PORT_ArenaZAlloc(arena, sizeof(SECAlgorithmID));
+        if (!pssParams.maskAlg) {
+            return SECFailure;
+        }
+        rv = SECOID_SetAlgorithmID(arena, pssParams.maskAlg,
+                                   SEC_OID_PKCS1_MGF1, hashAlgItem);
+        if (rv != SECSuccess) {
+            return rv;
+        }
+    }
+
+    if (!pssParams.saltLength.data) {
+        SECOidTag hashAlgTag = SECOID_GetAlgorithmTag(pssParams.hashAlg);
+        long hashLength = HASH_ResultLenByOidTag(hashAlgTag);
+        long saltLength = PR_MIN(hashLength, modBytes - hashLength - 2);
+
+        if (!SEC_ASN1EncodeInteger(arena, &pssParams.saltLength, saltLength)) {
+            return rv;
+        }
+    }
+
+    if (!pssParams.trailerField.data) {
+        if (!SEC_ASN1EncodeInteger(arena, &pssParams.trailerField, 1)) {
+            return rv;
+        }
+    }
+
+    if (!SEC_ASN1EncodeItem(arena, params,
+                            &pssParams, SECKEY_RSAPSSParamsTemplate)) {
+        return rv;
+    }
+
+    return rv;
+}
