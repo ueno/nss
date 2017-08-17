@@ -267,7 +267,7 @@ SGN_End(SGNContext *cx, SECItem *result)
         rv = DSAU_EncodeDerSigWithLen(result, &sigitem, sigitem.len);
         if (rv != SECSuccess)
             goto loser;
-        PORT_Free(sigitem.data);
+        SECITEM_FreeItem(&sigitem, PR_FALSE);
     } else {
         result->len = sigitem.len;
         result->data = sigitem.data;
@@ -275,7 +275,7 @@ SGN_End(SGNContext *cx, SECItem *result)
 
 loser:
     if (rv != SECSuccess) {
-        PORT_Free(sigitem.data);
+        SECITEM_FreeItem(&sigitem, PR_FALSE);
     }
     SGN_DestroyDigestInfo(di);
     if (arena != NULL) {
@@ -598,4 +598,227 @@ SEC_GetSignatureAlgorithmOidTag(KeyType keyType, SECOidTag hashAlgTag)
             break;
     }
     return sigTag;
+}
+
+static SECItem *
+sec_CreateRSAPSSParameters(PLArenaPool *arena,
+                           SECItem *result,
+                           SECOidTag hashAlgTag,
+                           const SECItem *params,
+                           const SECKEYPrivateKey *key)
+{
+    SECKEYRSAPSSParams pssParams;
+    int modBytes, hashLength;
+    unsigned long saltLength;
+    SECStatus rv;
+
+    if (key->keyType != rsaKey && key->keyType != rsaPssKey) {
+        PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
+        return NULL;
+    }
+
+    PORT_Memset(&pssParams, 0, sizeof(pssParams));
+
+    if (params && params->data) {
+        /* The parameters field should either be empty or contain
+         * valid RSA-PSS parameters */
+        PORT_Assert(!(params->len == 2 &&
+                      params->data[0] == SEC_ASN1_NULL &&
+                      params->data[1] == 0));
+        rv = SEC_QuickDERDecodeItem(arena, &pssParams,
+                                    SECKEY_RSAPSSParamsTemplate,
+                                    params);
+        if (rv != SECSuccess) {
+            return NULL;
+        }
+    }
+
+    if (pssParams.trailerField.data) {
+        unsigned long trailerField;
+
+        rv = SEC_ASN1DecodeInteger((SECItem *)&pssParams.trailerField,
+                                   &trailerField);
+        if (rv != SECSuccess) {
+            return NULL;
+        }
+        if (trailerField != 1) {
+            PORT_SetError(SEC_ERROR_INVALID_ARGS);
+            return NULL;
+        }
+    }
+
+    modBytes = PK11_GetPrivateModulusLen((SECKEYPrivateKey *)key);
+
+    /* Determine the hash algorithm to use, based on hashAlgTag and
+     * pssParams.hashAlg; there are four cases */
+    if (hashAlgTag != SEC_OID_UNKNOWN) {
+        if (pssParams.hashAlg) {
+            if (SECOID_GetAlgorithmTag(pssParams.hashAlg) != hashAlgTag) {
+                PORT_SetError(SEC_ERROR_INVALID_ARGS);
+                return NULL;
+            }
+        }
+    } else if (hashAlgTag == SEC_OID_UNKNOWN) {
+        if (pssParams.hashAlg) {
+            hashAlgTag = SECOID_GetAlgorithmTag(pssParams.hashAlg);
+        } else {
+            /* Find a suitable hash algorithm based on the NIST recommendation */
+            if (modBytes <= 384) { /* 128, in NIST 800-57, Part 1 */
+                hashAlgTag = SEC_OID_SHA256;
+            } else if (modBytes <= 960) { /* 192, NIST 800-57, Part 1 */
+                hashAlgTag = SEC_OID_SHA384;
+            } else {
+                hashAlgTag = SEC_OID_SHA512;
+            }
+        }
+    }
+
+    if (hashAlgTag != SEC_OID_SHA1 && hashAlgTag != SEC_OID_SHA224 &&
+        hashAlgTag != SEC_OID_SHA256 && hashAlgTag != SEC_OID_SHA384 &&
+        hashAlgTag != SEC_OID_SHA512) {
+        PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
+        return NULL;
+    }
+
+    /* Now that the hash algorithm is decided, check if it matches the
+     * existing parameters if any */
+    if (pssParams.maskAlg) {
+        SECAlgorithmID maskHashAlg;
+
+        if (SECOID_GetAlgorithmTag(pssParams.maskAlg) != SEC_OID_PKCS1_MGF1) {
+            PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
+            return NULL;
+        }
+
+        if (pssParams.maskAlg->parameters.data == NULL) {
+            PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
+            return NULL;
+        }
+
+        PORT_Memset(&maskHashAlg, 0, sizeof(maskHashAlg));
+        rv = SEC_QuickDERDecodeItem(arena, &maskHashAlg,
+                                    SEC_ASN1_GET(SECOID_AlgorithmIDTemplate),
+                                    &pssParams.maskAlg->parameters);
+        if (rv != SECSuccess) {
+            return NULL;
+        }
+
+        /* Following the recommendation in RFC 4055, assume the hash
+         * algorithm identical to pssParam.hashAlg */
+        if (SECOID_GetAlgorithmTag(&maskHashAlg) != hashAlgTag) {
+            PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
+            return NULL;
+        }
+    }
+
+    hashLength = HASH_ResultLenByOidTag(hashAlgTag);
+
+    if (pssParams.saltLength.data) {
+        rv = SEC_ASN1DecodeInteger((SECItem *)&pssParams.saltLength,
+                                   &saltLength);
+        if (rv != SECSuccess) {
+            return NULL;
+        }
+
+        /* The specified salt length is too long */
+        if (saltLength > modBytes - hashLength - 2) {
+            PORT_SetError(SEC_ERROR_INVALID_ARGS);
+            return NULL;
+        }
+    }
+
+    /* Fill in the parameters */
+    if (pssParams.hashAlg) {
+        if (hashAlgTag == SEC_OID_SHA1) {
+            /* Omit hashAlg if the the algorithm is SHA-1 (default) */
+            pssParams.hashAlg = NULL;
+        }
+    } else {
+        if (hashAlgTag != SEC_OID_SHA1) {
+            pssParams.hashAlg = PORT_ArenaZAlloc(arena, sizeof(SECAlgorithmID));
+            if (!pssParams.hashAlg) {
+                return NULL;
+            }
+            rv = SECOID_SetAlgorithmID(arena, pssParams.hashAlg, hashAlgTag,
+                                       NULL);
+            if (rv != SECSuccess) {
+                return NULL;
+            }
+        }
+    }
+
+    if (pssParams.maskAlg) {
+        if (hashAlgTag == SEC_OID_SHA1) {
+            /* Omit maskAlg if the the algorithm is SHA-1 (default) */
+            pssParams.maskAlg = NULL;
+        }
+    } else {
+        if (hashAlgTag != SEC_OID_SHA1) {
+            SECItem *hashAlgItem;
+
+            PORT_Assert(pssParams.hashAlg != NULL);
+
+            hashAlgItem = SEC_ASN1EncodeItem(arena, NULL, pssParams.hashAlg,
+                                             SEC_ASN1_GET(SECOID_AlgorithmIDTemplate));
+            if (!hashAlgItem) {
+                return NULL;
+            }
+            pssParams.maskAlg = PORT_ArenaZAlloc(arena, sizeof(SECAlgorithmID));
+            if (!pssParams.maskAlg) {
+                return NULL;
+            }
+            rv = SECOID_SetAlgorithmID(arena, pssParams.maskAlg,
+                                       SEC_OID_PKCS1_MGF1, hashAlgItem);
+            if (rv != SECSuccess) {
+                return NULL;
+            }
+        }
+    }
+
+    if (pssParams.saltLength.data) {
+        if (saltLength == 20) {
+            /* Omit the salt length if it is the default */
+            pssParams.saltLength.data = NULL;
+        }
+    } else {
+        /* Find a suitable length from the hash algorithm and modulus bits */
+        saltLength = PR_MIN(hashLength, modBytes - hashLength - 2);
+
+        if (saltLength != 20 &&
+            !SEC_ASN1EncodeInteger(arena, &pssParams.saltLength, saltLength)) {
+            return NULL;
+        }
+    }
+
+    if (pssParams.trailerField.data) {
+        /* Omit trailerField if the value is 1 (default) */
+        pssParams.trailerField.data = NULL;
+    }
+
+    return SEC_ASN1EncodeItem(arena, result,
+                              &pssParams, SECKEY_RSAPSSParamsTemplate);
+}
+
+SECItem *
+SEC_CreateSignatureAlgorithmParameters(PLArenaPool *arena,
+                                       SECItem *result,
+                                       SECOidTag signAlgTag,
+                                       SECOidTag hashAlgTag,
+                                       const SECItem *params,
+                                       const SECKEYPrivateKey *key)
+{
+    switch (signAlgTag) {
+        case SEC_OID_PKCS1_RSA_PSS_SIGNATURE:
+            return sec_CreateRSAPSSParameters(arena, result,
+                                              hashAlgTag, params, key);
+
+        default:
+            if (params == NULL)
+                return NULL;
+            if (result == NULL)
+                result = SECITEM_AllocItem(arena, NULL, 0);
+            if (SECITEM_CopyItem(arena, result, params) != SECSuccess)
+                return NULL;
+            return result;
+    }
 }

@@ -1128,6 +1128,7 @@ CERT_FindCertByNicknameOrEmailAddrForUsageCX;
 SGN_NewContextWithAlgorithmID;
 SEC_SignDataWithAlgorithmID;
 SEC_DerSignDataWithAlgorithmID;
+SEC_CreateSignatureAlgorithmParameters;
 ;+    local:
 ;+       *;
 ;+};

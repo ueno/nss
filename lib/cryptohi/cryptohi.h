@@ -190,6 +190,23 @@ extern void SEC_DestroySignedData(CERTSignedData *sd, PRBool freeit);
 extern SECOidTag SEC_GetSignatureAlgorithmOidTag(KeyType keyType,
                                                  SECOidTag hashAlgTag);
 
+/*
+** Create algorithm parameters for signing. Return a new item
+** allocated from arena, or NULL on failure.
+**	"arena" is the memory arena to use to allocate data from
+**	"result" the encoded parameters (memory is allocated)
+**	"signAlgTag" is the signing algorithm
+**	"hashAlgTag" is the preferred hash algorithm
+**	"params" is the default parameters
+**	"key" is the private key
+*/
+extern SECItem *SEC_CreateSignatureAlgorithmParameters(PLArenaPool *arena,
+                                                       SECItem *result,
+                                                       SECOidTag signAlgTag,
+                                                       SECOidTag hashAlgTag,
+                                                       const SECItem *params,
+                                                       const SECKEYPrivateKey *key);
+
 /****************************************/
 /*
 ** Signature verification operations
