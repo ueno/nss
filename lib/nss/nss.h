@@ -290,6 +290,7 @@ SECStatus NSS_UnregisterShutdown(NSS_ShutdownFunc sFunc, void *appData);
 #define NSS_TLS_VERSION_MAX_POLICY 0x009
 #define NSS_DTLS_VERSION_MIN_POLICY 0x00a
 #define NSS_DTLS_VERSION_MAX_POLICY 0x00b
+/* 0x00c is used by a private option NSS_PKCS12_DECODE_COMPAT_PBES2 */
 
 /*
  * Set and get global options for the NSS library.

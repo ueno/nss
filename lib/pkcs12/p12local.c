@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nssrenam.h"
+#include "nss.h"
 #include "pkcs12.h"
 #include "secpkcs7.h"
 #include "secasn1.h"
@@ -976,6 +977,13 @@ sec_pkcs12_is_pkcs12_pbe_algorithm(SECOidTag algorithm)
     }
 }
 
+/* Until NSS 3.30, PKCS#12 routines used BMPString encoding for
+ * passwords, even if PBE algorithm is PBES2 defined in PKCS#5.
+ *
+ * This option reverts the decoding behavior to the old NSS versions.
+ * This is only used by pk12util; don't expose it in a public header file. */
+#define NSS_PKCS12_DECODE_COMPAT_PBES2 0x00c
+
 /* this function decodes a password from Unicode if necessary,
  * according to the PBE algorithm.
  *
@@ -988,7 +996,15 @@ sec_pkcs12_decode_password(PLArenaPool *arena,
                            SECOidTag algorithm,
                            const SECItem *pwitem)
 {
-    if (!sec_pkcs12_is_pkcs12_pbe_algorithm(algorithm))
+    PRInt32 compatOption = PR_FALSE;
+    SECStatus rv;
+
+    rv = NSS_OptionGet(NSS_PKCS12_DECODE_COMPAT_PBES2, &compatOption);
+    if (rv != SECSuccess) {
+        return PR_FALSE;
+    }
+
+    if (compatOption && !sec_pkcs12_is_pkcs12_pbe_algorithm(algorithm))
         return sec_pkcs12_convert_item_to_unicode(arena, result,
                                                   (SECItem *)pwitem,
                                                   PR_TRUE, PR_FALSE, PR_FALSE);

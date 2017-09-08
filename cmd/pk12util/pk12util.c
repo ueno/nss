@@ -20,6 +20,13 @@
 
 #define PKCS12_IN_BUFFER_SIZE 200
 
+/* Until NSS 3.30, PKCS#12 routines used BMPString encoding for
+ * passwords, even if PBE algorithm is PBES2 defined in PKCS#5.
+ *
+ * This option reverts the behavior to the old NSS versions.
+ * This is only used by pk12util; don't expose it in a public header file. */
+#define NSS_PKCS12_DECODE_COMPAT_PBES2 0x00c
+
 static char *progName;
 PRBool pk12_debugging = PR_FALSE;
 PRBool dumpRawFile;
@@ -357,6 +364,7 @@ p12U_ReadPKCS12File(SECItem *uniPwp, char *in_file, PK11SlotInfo *slot,
     SECItem p12file = { 0 };
     SECStatus rv = SECFailure;
     PRBool swapUnicode = PR_FALSE;
+    PRInt32 compatOption = PR_FALSE;
     PRBool trypw;
     int error;
 
@@ -424,6 +432,18 @@ p12U_ReadPKCS12File(SECItem *uniPwp, char *in_file, PK11SlotInfo *slot,
                 SEC_PKCS12DecoderFinish(p12dcx);
                 uniPwp->len = 0;
                 trypw = PR_TRUE;
+            } else if (!compatOption) {
+                /* Until NSS 3.30, PKCS#12 routines used BMPString
+                 * encoding for passwords, even if PBE algorithm is
+                 * PBES2 defined in PKCS#5. Retry with this mode. */
+                compatOption = PR_TRUE;
+                rv = NSS_OptionSet(NSS_PKCS12_DECODE_COMPAT_PBES2, compatOption);
+                if (rv != SECSuccess) {
+                    SECU_PrintError(progName, "PKCS12 decoding failed to set option");
+                    pk12uErrno = PK12UERR_DECODEVERIFY;
+                    break;
+                }
+                trypw = PR_TRUE;
             } else {
                 SECU_PrintError(progName, "PKCS12 decode not verified");
                 pk12uErrno = PK12UERR_DECODEVERIFY;
@@ -431,6 +451,15 @@ p12U_ReadPKCS12File(SECItem *uniPwp, char *in_file, PK11SlotInfo *slot,
             }
         }
     } while (trypw == PR_TRUE);
+
+    /* Revert the compatibility option set above. */
+    if (compatOption) {
+        rv = NSS_OptionSet(NSS_PKCS12_DECODE_COMPAT_PBES2, PR_FALSE);
+        if (rv != SECSuccess) {
+            SECU_PrintError(progName, "PKCS12 decoding failed to set option");
+            pk12uErrno = PK12UERR_DECODEVERIFY;
+        }
+    }
 /* rv has been set at this point */
 
 done:

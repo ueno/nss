@@ -15,6 +15,13 @@
 #include "nss.h"
 #include "nssoptions.h"
 
+/* Until NSS 3.30, PKCS#12 routines used BMPString encoding for
+ * passwords, even if PBE algorithm is PBES2 defined in PKCS#5.
+ *
+ * This option reverts the behavior to the old NSS versions.
+ * This is only used by pk12util; don't expose it in a public header file. */
+#define NSS_PKCS12_DECODE_COMPAT_PBES2 0x00c
+
 struct nssOps {
     PRInt32 rsaMinKeySize;
     PRInt32 dhMinKeySize;
@@ -23,6 +30,7 @@ struct nssOps {
     PRInt32 tlsVersionMaxPolicy;
     PRInt32 dtlsVersionMinPolicy;
     PRInt32 dtlsVersionMaxPolicy;
+    PRInt32 pkcs12DecodeCompatPBES2;
 };
 
 static struct nssOps nss_ops = {
@@ -33,6 +41,7 @@ static struct nssOps nss_ops = {
     0xffff, /* set TLS max to more than the largest legal SSL value */
     1,
     0xffff,
+    PR_FALSE
 };
 
 SECStatus
@@ -61,6 +70,9 @@ NSS_OptionSet(PRInt32 which, PRInt32 value)
             break;
         case NSS_DTLS_VERSION_MAX_POLICY:
             nss_ops.dtlsVersionMaxPolicy = value;
+            break;
+        case NSS_PKCS12_DECODE_COMPAT_PBES2:
+            nss_ops.pkcs12DecodeCompatPBES2 = value;
             break;
         default:
             rv = SECFailure;
@@ -95,6 +107,9 @@ NSS_OptionGet(PRInt32 which, PRInt32 *value)
             break;
         case NSS_DTLS_VERSION_MAX_POLICY:
             *value = nss_ops.dtlsVersionMaxPolicy;
+            break;
+        case NSS_PKCS12_DECODE_COMPAT_PBES2:
+            *value = nss_ops.pkcs12DecodeCompatPBES2;
             break;
         default:
             rv = SECFailure;
