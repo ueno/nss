@@ -1048,6 +1048,7 @@ SECKEY_SignatureLen(const SECKEYPublicKey *pubk)
 
     switch (pubk->keyType) {
         case rsaKey:
+        case rsaPssKey:
             b0 = pubk->u.rsa.modulus.data[0];
             return b0 ? pubk->u.rsa.modulus.len : pubk->u.rsa.modulus.len - 1;
         case dsaKey:
