@@ -164,6 +164,7 @@ SGN_End(SGNContext *cx, SECItem *result)
 
     result->data = 0;
     digder.data = 0;
+    sigitem.data = 0;
 
     /* Finish up digest function */
     if (cx->hashcx == NULL) {
@@ -172,7 +173,8 @@ SGN_End(SGNContext *cx, SECItem *result)
     }
     (*cx->hashobj->end)(cx->hashcx, digest, &part1, sizeof(digest));
 
-    if (privKey->keyType == rsaKey) {
+    if (privKey->keyType == rsaKey &&
+        cx->signalg != SEC_OID_PKCS1_RSA_PSS_SIGNATURE) {
 
         arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
         if (!arena) {
@@ -216,26 +218,65 @@ SGN_End(SGNContext *cx, SECItem *result)
         goto loser;
     }
 
-    rv = PK11_Sign(privKey, &sigitem, &digder);
-    if (rv != SECSuccess) {
-        PORT_Free(sigitem.data);
-        sigitem.data = NULL;
-        goto loser;
+    if (cx->signalg == SEC_OID_PKCS1_RSA_PSS_SIGNATURE) {
+        CK_RSA_PKCS_PSS_PARAMS mech;
+        SECItem mechItem = { siBuffer, (unsigned char *)&mech, sizeof(mech) };
+
+        PORT_Memset(&mech, 0, sizeof(mech));
+
+        if (cx->params && cx->params->data) {
+            SECKEYRSAPSSParams params;
+
+            arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
+            if (!arena) {
+                rv = SECFailure;
+                goto loser;
+            }
+
+            PORT_Memset(&params, 0, sizeof(params));
+            rv = SEC_QuickDERDecodeItem(arena, &params,
+                                        SECKEY_RSAPSSParamsTemplate,
+                                        cx->params);
+            if (rv != SECSuccess) {
+                goto loser;
+            }
+            rv = sec_RSAPSSParamsToMechanism(&mech, &params);
+            if (rv != SECSuccess) {
+                goto loser;
+            }
+        } else {
+            mech.hashAlg = CKM_SHA_1;
+            mech.mgf = CKG_MGF1_SHA1;
+            mech.sLen = digder.len;
+        }
+        rv = PK11_SignWithMechanism(privKey, CKM_RSA_PKCS_PSS, &mechItem,
+                                    &sigitem, &digder);
+        if (rv != SECSuccess) {
+            goto loser;
+        }
+    } else {
+        rv = PK11_Sign(privKey, &sigitem, &digder);
+        if (rv != SECSuccess) {
+            goto loser;
+        }
     }
 
     if ((cx->signalg == SEC_OID_ANSIX9_DSA_SIGNATURE) ||
         (cx->signalg == SEC_OID_ANSIX962_EC_PUBLIC_KEY)) {
         /* DSAU_EncodeDerSigWithLen works for DSA and ECDSA */
         rv = DSAU_EncodeDerSigWithLen(result, &sigitem, sigitem.len);
-        PORT_Free(sigitem.data);
         if (rv != SECSuccess)
             goto loser;
+        PORT_Free(sigitem.data);
     } else {
         result->len = sigitem.len;
         result->data = sigitem.data;
     }
 
 loser:
+    if (rv != SECSuccess) {
+        PORT_Free(sigitem.data);
+    }
     SGN_DestroyDigestInfo(di);
     if (arena != NULL) {
         PORT_FreeArena(arena, PR_FALSE);
