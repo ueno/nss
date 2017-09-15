@@ -20,6 +20,12 @@
 #include "gcm.h"
 #include "mpi.h"
 
+/* The x86{,_64} hardware implementation relies on AES-NI */
+#ifdef NSS_DISABLE_HW_AES
+#undef DISABLE_HW_AES
+#define DISABLE_HW_AES 1
+#endif
+
 #ifdef USE_HW_AES
 #include "intel-aes.h"
 #endif
@@ -309,7 +315,7 @@ rijndael_key_expansion7(AESContext *cx, const unsigned char *key, unsigned int N
     }
 }
 
-#if defined(NSS_X86_OR_X64)
+#if defined(NSS_X86_OR_X64) && !defined(DISABLE_HW_AES)
 #define EXPAND_KEY128(k, rcon, res)                   \
     tmp_key = _mm_aeskeygenassist_si128(k, rcon);     \
     tmp_key = _mm_shuffle_epi32(tmp_key, 0xFF);       \
@@ -418,7 +424,7 @@ native_key_expansion256(AESContext *cx, const unsigned char *key)
                        keySchedule[13], 0xFF);
 }
 
-#endif /* NSS_X86_OR_X64 */
+#endif /* NSS_X86_OR_X64 && !DISABLE_HW_AES */
 
 /*
  * AES key expansion using aes-ni instructions.
@@ -426,7 +432,7 @@ native_key_expansion256(AESContext *cx, const unsigned char *key)
 static void
 native_key_expansion(AESContext *cx, const unsigned char *key, unsigned int Nk)
 {
-#ifdef NSS_X86_OR_X64
+#if defined(NSS_X86_OR_X64) && !defined(DISABLE_HW_AES)
     switch (Nk) {
         case 4:
             native_key_expansion128(cx, key);
@@ -443,7 +449,7 @@ native_key_expansion(AESContext *cx, const unsigned char *key, unsigned int Nk)
     }
 #else
     PORT_Assert(0);
-#endif /* NSS_X86_OR_X64 */
+#endif /* NSS_X86_OR_X64 && DISABLE_HW_AES */
 }
 
 static void
@@ -451,7 +457,7 @@ native_encryptBlock(AESContext *cx,
                     unsigned char *output,
                     const unsigned char *input)
 {
-#ifdef NSS_X86_OR_X64
+#if defined(NSS_X86_OR_X64) && !defined(DISABLE_HW_AES)
     int i;
     pre_align __m128i m post_align = _mm_loadu_si128((__m128i *)input);
     m = _mm_xor_si128(m, cx->keySchedule[0]);
@@ -462,7 +468,7 @@ native_encryptBlock(AESContext *cx,
     _mm_storeu_si128((__m128i *)output, m);
 #else
     PORT_Assert(0);
-#endif /* NSS_X86_OR_X64 */
+#endif /* NSS_X86_OR_X64 && DISABLE_HW_AES */
 }
 
 /* rijndael_key_expansion
@@ -637,7 +643,7 @@ rijndael_encryptBlock128(AESContext *cx,
     PRUint32 *roundkeyw;
     rijndael_state state;
     PRUint32 C0, C1, C2, C3;
-#if defined(NSS_X86_OR_X64)
+#if defined(NSS_X86_OR_X64) && !defined(DISABLE_HW_AES)
 #define pIn input
 #define pOut output
 #else
@@ -713,7 +719,7 @@ rijndael_encryptBlock128(AESContext *cx,
     *((PRUint32 *)(pOut + 4)) = C1;
     *((PRUint32 *)(pOut + 8)) = C2;
     *((PRUint32 *)(pOut + 12)) = C3;
-#if defined(NSS_X86_OR_X64)
+#if defined(NSS_X86_OR_X64) && !defined(DISABLE_HW_AES)
 #undef pIn
 #undef pOut
 #else
@@ -732,7 +738,7 @@ rijndael_decryptBlock128(AESContext *cx,
     PRUint32 *roundkeyw;
     rijndael_state state;
     PRUint32 C0, C1, C2, C3;
-#if defined(NSS_X86_OR_X64)
+#if defined(NSS_X86_OR_X64) && !defined(DISABLE_HW_AES)
 #define pIn input
 #define pOut output
 #else
@@ -804,7 +810,7 @@ rijndael_decryptBlock128(AESContext *cx,
     *((PRUint32 *)(pOut + 8)) ^= *roundkeyw--;
     *((PRUint32 *)(pOut + 4)) ^= *roundkeyw--;
     *((PRUint32 *)pOut) ^= *roundkeyw--;
-#if defined(NSS_X86_OR_X64)
+#if defined(NSS_X86_OR_X64) && !defined(DISABLE_HW_AES)
 #undef pIn
 #undef pOut
 #else

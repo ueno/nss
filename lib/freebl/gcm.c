@@ -18,7 +18,13 @@
 #include <limits.h>
 
 #ifdef NSS_X86_OR_X64
+/* The x86{,_64} hardware implementation relies on CLMUL */
+#ifdef NSS_DISABLE_PCLMUL
+#undef DISABLE_HW_GCM
+#define DISABLE_HW_GCM 1
+#else
 #include <wmmintrin.h> /* clmul */
+#endif
 #endif
 
 /* Forward declarations */
@@ -53,7 +59,7 @@ gcmHash_InitContext(gcmHashContext *ghash, const unsigned char *H, PRBool sw)
     ghash->h_low = get64(H + 8);
     ghash->h_high = get64(H);
     if (clmul_support() && !sw) {
-#ifdef NSS_X86_OR_X64
+#if defined(NSS_X86_OR_X64) && !defined(DISABLE_HW_GCM)
         ghash->ghash_mul = gcm_HashMult_hw;
         ghash->x = _mm_setzero_si128();
         /* MSVC requires __m64 to load epi64. */
@@ -63,7 +69,7 @@ gcmHash_InitContext(gcmHashContext *ghash, const unsigned char *H, PRBool sw)
 #else
         PORT_SetError(SEC_ERROR_LIBRARY_FAILURE);
         return SECFailure;
-#endif /* NSS_X86_OR_X64 */
+#endif /* NSS_X86_OR_X64 && !DISABLE_HW_GCM */
     } else {
 /* We fall back to the software implementation if we can't use / don't
          * want to use pclmul. */
@@ -287,7 +293,7 @@ SECStatus
 gcm_HashMult_hw(gcmHashContext *ghash, const unsigned char *buf,
                 unsigned int count)
 {
-#ifdef NSS_X86_OR_X64
+#if defined(NSS_X86_OR_X64) && !defined(NSS_DISABLE_PCLMUL)
     size_t i;
     pre_align __m128i z_high post_align;
     pre_align __m128i z_low post_align;
@@ -368,13 +374,13 @@ static SECStatus
 gcm_zeroX(gcmHashContext *ghash)
 {
     if (ghash->hw) {
-#ifdef NSS_X86_OR_X64
+#if defined(NSS_X86_OR_X64) && defined(__SSE2__)
         ghash->x = _mm_setzero_si128();
         return SECSuccess;
 #else
         PORT_SetError(SEC_ERROR_LIBRARY_FAILURE);
         return SECFailure;
-#endif /* NSS_X86_OR_X64 */
+#endif /* NSS_X86_OR_X64 && defined(__SSE2__) */
     }
 
     ghash->x_high = ghash->x_low = 0;
@@ -503,7 +509,7 @@ gcmHash_Final(gcmHashContext *ghash, unsigned char *outbuf,
     }
 
     if (ghash->hw) {
-#ifdef NSS_X86_OR_X64
+#if defined(NSS_X86_OR_X64) && !defined(DISABLE_HW_GCM)
         uint64_t tmp_out[2];
         _mm_storeu_si128((__m128i *)tmp_out, ghash->x);
         WRITE64(tmp_out[0], T + 8);
@@ -511,7 +517,7 @@ gcmHash_Final(gcmHashContext *ghash, unsigned char *outbuf,
 #else
         PORT_SetError(SEC_ERROR_LIBRARY_FAILURE);
         return SECFailure;
-#endif /* NSS_X86_OR_X64 */
+#endif /* NSS_X86_OR_X64 && !DISABLE_HW_GCM */
     } else {
         WRITE64(ghash->x_low, T + 8);
         WRITE64(ghash->x_high, T);

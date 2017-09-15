@@ -110,7 +110,19 @@ endif
 # NSS_X86_OR_X64 means the target is either x86 or x64
 ifeq (,$(filter-out i386 x386 x86 x86_64,$(CPU_ARCH)))
         DEFINES += -DNSS_X86_OR_X64
-        CFLAGS += -mpclmul -maes
+ifdef NSS_DISABLE_PCLMUL
+        DEFINES += -DNSS_DISABLE_PCLMUL
+else
+        CFLAGS += -mpclmul
+endif
+ifdef NSS_DISABLE_HW_AES
+        DEFINES += -DNSS_DISABLE_HW_AES
+else
+        CFLAGS += -maes
+endif
+ifdef NSS_DISABLE_AVX
+        DEFINES += -DNSS_DISABLE_AVX
+endif
 ifneq (,$(USE_64)$(USE_X32))
         DEFINES += -DNSS_X64
 else

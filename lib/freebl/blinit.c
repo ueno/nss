@@ -25,6 +25,8 @@ static PRBool clmul_support_ = PR_FALSE;
 static PRBool avx_support_ = PR_FALSE;
 
 #ifdef NSS_X86_OR_X64
+
+#ifndef NSS_DISABLE_AVX
 /*
  * Adapted from the example code in "How to detect New Instruction support in
  * the 4th generation Intel Core processor family" by Max Locktyukhin.
@@ -56,6 +58,7 @@ check_xcr0_ymm()
     /* Check if xmm and ymm state are enabled in XCR0. */
     return (xcr0 & 6) == 6;
 }
+#endif
 
 #define ECX_AESNI (1 << 25)
 #define ECX_CLMUL (1 << 1)
@@ -67,17 +70,33 @@ check_xcr0_ymm()
 void
 CheckX86CPUSupport()
 {
-    unsigned long eax, ebx, ecx, edx;
+#ifndef NSS_DISABLE_HW_AES
     char *disable_hw_aes = PR_GetEnvSecure("NSS_DISABLE_HW_AES");
+#endif
+#ifndef NSS_DISABLE_PCLMUL
     char *disable_pclmul = PR_GetEnvSecure("NSS_DISABLE_PCLMUL");
+#endif
+#ifndef NSS_DISABLE_AVX
     char *disable_avx = PR_GetEnvSecure("NSS_DISABLE_AVX");
+#endif
+#if !defined(NSS_DISABLE_HW_AES) || \
+    !defined(NSS_DISABLE_PCLMUL) || \
+    !defined(NSS_DISABLE_AVX)
+    unsigned long eax, ebx, ecx, edx;
     freebl_cpuid(1, &eax, &ebx, &ecx, &edx);
+#endif
+#ifndef NSS_DISABLE_HW_AES
     aesni_support_ = (PRBool)((ecx & ECX_AESNI) != 0 && disable_hw_aes == NULL);
+#endif
+#ifndef NSS_DISABLE_PCLMUL
     clmul_support_ = (PRBool)((ecx & ECX_CLMUL) != 0 && disable_pclmul == NULL);
+#endif
+#ifndef NSS_DISABLE_AVX
     /* For AVX we check AVX, OSXSAVE, and XSAVE
      * as well as XMM and YMM state. */
     avx_support_ = (PRBool)((ecx & AVX_BITS) == AVX_BITS) && check_xcr0_ymm() &&
                    disable_avx == NULL;
+#endif
 }
 #endif /* NSS_X86_OR_X64 */
 
