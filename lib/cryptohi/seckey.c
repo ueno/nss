@@ -2055,14 +2055,26 @@ SECKEY_GetECCOid(const SECKEYECParams *params)
      * representing a named curve. Here, we strip away everything
      * before the actual OID and use the OID to look up a named curve.
      */
+    if (params->len <= 2) {
+        return SEC_OID_UNKNOWN;
+    }
     if (params->data[0] != SEC_ASN1_OBJECT_ID)
-        return 0;
+        return SEC_OID_UNKNOWN;
     oid.len = params->len - 2;
     oid.data = params->data + 2;
     if ((oidData = SECOID_FindOID(&oid)) == NULL)
-        return 0;
+        return SEC_OID_UNKNOWN;
 
     return oidData->offset;
+}
+
+SECOidTag
+SECKEY_GetECCCurve(const SECKEYPublicKey *pubKey)
+{
+    if (pubKey->keyType != ecKey) {
+        return SEC_OID_UNKNOWN;
+    }
+    return SECKEY_GetECCOid(&pubKey->u.ec.DEREncodedParams);
 }
 
 static CK_MECHANISM_TYPE

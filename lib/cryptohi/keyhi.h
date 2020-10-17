@@ -266,6 +266,9 @@ extern int SECKEY_ECParamsToBasePointOrderLen(const SECItem *params);
  */
 SECOidTag SECKEY_GetECCOid(const SECKEYECParams *params);
 
+/* return the Curve OID from the key */
+SECOidTag SECKEY_GetECCCurve(const SECKEYPublicKey *pubKey);
+
 SEC_END_PROTOS
 
 #endif /* _KEYHI_H_ */

@@ -128,6 +128,7 @@ while [ $# -gt 0 ]; do
         --system-sqlite) gyp_params+=(-Duse_system_sqlite=1) ;;
         --enable-fips) gyp_params+=(-Ddisable_fips=0) ;;
         --enable-libpkix) gyp_params+=(-Ddisable_libpkix=0) ;;
+        --enable-dtrace) gyp_params+=(-Ddisable_dtrace=0) ;;
         --mozpkix-only) gyp_params+=(-Dmozpkix_only=1 -Ddisable_tests=1 -Dsign_libs=0) ;;
         --disable-keylog) sslkeylogfile=0 ;;
         --enable-legacy-db) gyp_params+=(-Ddisable_dbm=0) ;;

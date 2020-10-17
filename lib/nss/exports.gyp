@@ -19,10 +19,39 @@
         {
           'files': [
             'nssoptions.h',
+            'nssprobes.h',
+            '<(nssprobes_generated_h)',
             'nssrenam.h'
           ],
           'destination': '<(nss_private_dist_dir)/<(module)'
         }
+      ],
+      'conditions': [
+        [ 'disable_dtrace!=1', {
+          'actions': [
+            {
+              'msvs_cygwin_shell': 0,
+              'action': [
+                'dtrace',
+                '-s',
+                '<@(_inputs)',
+                '-h',
+                '-o',
+                '<@(_outputs)',
+              ],
+              'inputs': [
+                'nssprobes.d',
+              ],
+              'outputs': [
+                '<(nssprobes_generated_h)'
+              ],
+              'action_name': 'generate_nssprobes_h'
+            },
+          ],
+          'variables': {
+            'nssprobes_generated_h': '<(INTERMEDIATE_DIR)/nssprobes_generated.h',
+          }
+        }],
       ]
     }
   ],

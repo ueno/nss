@@ -76,6 +76,57 @@
             'NSS_ALLOW_SSLKEYLOGFILE',
           ],
         }],
+        [ 'disable_dtrace!=1', {
+          'sources': [
+            '<(sslprobes_generated_h)',
+            '<(sslprobes_generated_o)',
+          ],
+          'include_dirs': [
+            '<(INTERMEDIATE_DIR)',
+          ],
+          'actions': [
+            {
+              'msvs_cygwin_shell': 0,
+              'action': [
+                'dtrace',
+                '-s',
+                'sslprobes.d',
+                '-h',
+                '-o',
+                '<@(_outputs)',
+              ],
+              'inputs': [
+                'sslprobes.d',
+              ],
+              'outputs': [
+                '<(sslprobes_generated_h)'
+              ],
+              'action_name': 'generate_sslprobes_h'
+            },
+            {
+              'msvs_cygwin_shell': 0,
+              'action': [
+                'dtrace',
+                '-s',
+                '<@(_inputs)',
+                '-G',
+                '-o',
+                '<@(_outputs)',
+              ],
+              'inputs': [
+                'sslprobes.d',
+              ],
+              'outputs': [
+                '<(sslprobes_generated_o)'
+              ],
+              'action_name': 'generate_sslprobes_o'
+            }
+          ],
+          'variables': {
+            'sslprobes_generated_h': '<(INTERMEDIATE_DIR)/sslprobes_generated.h',
+            'sslprobes_generated_o': '<(INTERMEDIATE_DIR)/sslprobes_generated.o',
+          }
+        }],
       ],
       'dependencies': [
         '<(DEPTH)/exports.gyp:nss_exports',

@@ -21,6 +21,7 @@
 #endif /* NSS_DISABLE_LIBPKIX */
 
 #include "nsspki.h"
+#include "nssprobes.h"
 #include "pkitm.h"
 #include "pkim.h"
 #include "pki3hack.h"
@@ -165,6 +166,13 @@ CERT_VerifySignedDataWithPublicKey(const CERTSignedData *sd,
     SECOidTag sigAlg;
     SECOidTag encAlg;
     SECOidTag hashAlg;
+#ifdef NSS_HAS_PROBES
+    /* NOTE: ABI Probe variables, can't change size */
+    PRUint32 keySize = SECKEY_PublicKeyStrengthInBits(pubKey);
+    PRUint32 curveAlg = SECKEY_GetECCCurve(pubKey);
+    PRUint32 encAlgProbe;
+    PRUint32 hashAlgProbe;
+#endif
     PRUint32 policyFlags;
 
     if (!pubKey || !sd) {
@@ -202,6 +210,12 @@ CERT_VerifySignedDataWithPublicKey(const CERTSignedData *sd,
     sig = sd->signature;
     /* convert sig->len from bit counts to byte count. */
     DER_ConvertBitString(&sig);
+
+#ifdef NSS_HAS_PROBES
+    encAlgProbe = encAlg;
+    hashAlgProbe = hashAlg;
+#endif
+    PROBE(NSS_CRYPTO_CERT_SIGNATURE_VERIFY(encAlgProbe, curveAlg, keySize, hashAlgProbe));
 
     rv = VFY_VerifyDataWithAlgorithmID(sd->data.data, sd->data.len, pubKey,
                                        &sig, &sd->signatureAlgorithm,

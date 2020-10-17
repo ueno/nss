@@ -1204,3 +1204,9 @@ PK11_ImportDataKey;
 ;+    local:
 ;+       *;
 ;+};
+;+NSS_3.57 { 	# NSS 3.57 release
+;+    global:
+SECKEY_GetECCCurve;
+;+    local:
+;+       *;
+;+};

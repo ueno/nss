@@ -21,6 +21,7 @@
 #include "sslerr.h"
 #include "ssl3ext.h"
 #include "ssl3exthandle.h"
+#include "sslprobes.h"
 #include "tls13psk.h"
 #include "tls13subcerts.h"
 #include "prtime.h"
@@ -1124,7 +1125,13 @@ SECStatus
 ssl3_NegotiateVersion(sslSocket *ss, SSL3ProtocolVersion peerVersion,
                       PRBool allowLargerPeerVersion)
 {
+    /* NOTE: ABI Probe variables, can't change size */
     SSL3ProtocolVersion negotiated;
+#ifdef NSS_HAS_PROBES
+    size_t connectionID = (size_t)ss;
+    PRUint16 version;
+    PRUint8 isServer = ss->sec.isServer;
+#endif
 
     /* Prevent negotiating to a lower version in response to a TLS 1.3 HRR. */
     if (ss->ssl3.hs.helloRetry) {
@@ -1151,6 +1158,10 @@ ssl3_NegotiateVersion(sslSocket *ss, SSL3ProtocolVersion peerVersion,
     }
 
     ss->version = negotiated;
+#ifdef NSS_HAS_PROBES
+    version = negotiated;
+#endif
+    PROBE(NSS_CRYPTO_TLS_VERSION(connectionID, isServer, version));
     return SECSuccess;
 }
 
@@ -1334,10 +1345,19 @@ ssl_VerifySignedHashesWithPubKey(sslSocket *ss, SECKEYPublicKey *key,
     SECItem *signature = NULL;
     SECStatus rv = SECFailure;
     SECItem hashItem;
-    SECOidTag encAlg;
-    SECOidTag hashAlg;
     void *pwArg = ss->pkcs11PinArg;
     PRBool isRsaPssScheme = ssl_IsRsaPssSignatureScheme(scheme);
+    /* NOTE: ABI Probe variables, can't change size */
+    SECOidTag encAlg;
+    SECOidTag hashAlg;
+#ifdef NSS_HAS_PROBES
+    size_t connectionID = (size_t)ss;
+    PRUint32 keySize = SECKEY_PublicKeyStrengthInBits(key);
+    PRUint32 curveAlg = SEC_OID_UNKNOWN;
+    PRUint32 encAlgProbe;
+    PRUint32 hashAlgProbe;
+    PRUint8 isServer = ss->sec.isServer;
+#endif
 
     PRINT_BUF(60, (NULL, "check signed hashes", buf->data, buf->len));
 
@@ -1379,6 +1399,9 @@ ssl_VerifySignedHashesWithPubKey(sslSocket *ss, SECKEYPublicKey *key,
 
         case ecKey:
             encAlg = SEC_OID_ANSIX962_EC_PUBLIC_KEY;
+#ifdef NSS_HAS_PROBES
+            curveAlg = SECKEY_GetECCCurve(key);
+#endif
             /* ssl_hash_none is used to specify the MD5/SHA1 concatenated hash.
              * In that case, we use just the SHA1 part.
              * ECDSA signatures always encode the integers r and s using ASN.1
@@ -1405,6 +1428,13 @@ ssl_VerifySignedHashesWithPubKey(sslSocket *ss, SECKEYPublicKey *key,
 
     PRINT_BUF(60, (NULL, "hash(es) to be verified",
                    hashItem.data, hashItem.len));
+
+#ifdef NSS_HAS_PROBES
+    encAlgProbe = encAlg;
+    hashAlgProbe = hashAlg;
+#endif
+    PROBE(NSS_CRYPTO_TLS_SIGNATURE_VERIFY(connectionID, isServer, encAlgProbe,
+                                          curveAlg, keySize, hashAlgProbe));
 
     if (isRsaPssScheme ||
         hashAlg == SEC_OID_UNKNOWN ||
@@ -1610,6 +1640,12 @@ ssl3_SetupPendingCipherSpec(sslSocket *ss, SSLSecretDirection direction,
 {
     ssl3CipherSpec *spec;
     const ssl3CipherSpec *prev;
+#ifdef NSS_HAS_PROBES
+    /* NOTE: ABI Probe variables, can't change size */
+    size_t connectionID = (size_t)ss;
+    PRUint32 cipherAlg;
+    PRUint8 isServer = ss->sec.isServer;
+#endif
 
     prev = (direction == ssl_secret_write) ? ss->ssl3.cwSpec : ss->ssl3.crSpec;
     if (prev->epoch == PR_UINT16_MAX) {
@@ -1624,6 +1660,11 @@ ssl3_SetupPendingCipherSpec(sslSocket *ss, SSLSecretDirection direction,
 
     spec->cipherDef = ssl_GetBulkCipherDef(suiteDef);
     spec->macDef = ssl_GetMacDef(ss, suiteDef);
+
+#ifdef NSS_HAS_PROBES
+    cipherAlg = spec->cipherDef->oid;
+#endif
+    PROBE(NSS_CRYPTO_TLS_CIPHER(connectionID, isServer, cipherAlg));
 
     spec->epoch = prev->epoch + 1;
     spec->nextSeqNum = 0;
@@ -6188,6 +6229,13 @@ ssl3_SendClientKeyExchange(sslSocket *ss)
 {
     SECKEYPublicKey *serverKey = NULL;
     SECStatus rv = SECFailure;
+#ifdef NSS_HAS_PROBES
+    /* NOTE: ABI Probe variables, can't change size */
+    size_t connectionID = (size_t)ss;
+    PRUint32 keySize;
+    PRUint32 curveAlg = SEC_OID_UNKNOWN;
+    PRUint32 keaAlg;
+#endif
 
     SSL_TRC(3, ("%d: SSL3[%d]: send client_key_exchange handshake",
                 SSL_GETPID(), ss->fd));
@@ -6208,17 +6256,30 @@ ssl3_SendClientKeyExchange(sslSocket *ss)
 
     ss->sec.keaType = ss->ssl3.hs.kea_def->exchKeyType;
     ss->sec.keaKeyBits = SECKEY_PublicKeyStrengthInBits(serverKey);
+#ifdef NSS_HAS_PROBES
+    keySize = ss->sec.keaKeyBits;
+#endif
 
     switch (ss->ssl3.hs.kea_def->exchKeyType) {
         case ssl_kea_rsa:
+#ifdef NSS_HAS_PROBES
+            keaAlg = SEC_OID_PKCS1_RSA_ENCRYPTION;
+#endif
             rv = ssl3_SendRSAClientKeyExchange(ss, serverKey);
             break;
 
         case ssl_kea_dh:
+#ifdef NSS_HAS_PROBES
+            keaAlg = SEC_OID_X942_DIFFIE_HELMAN_KEY;
+#endif
             rv = ssl3_SendDHClientKeyExchange(ss, serverKey);
             break;
 
         case ssl_kea_ecdh:
+#ifdef NSS_HAS_PROBES
+            keaAlg = SEC_OID_ANSIX962_EC_PUBLIC_KEY;
+            curveAlg = SECKEY_GetECCCurve(serverKey);
+#endif
             rv = ssl3_SendECDHClientKeyExchange(ss, serverKey);
             break;
 
@@ -6227,6 +6288,8 @@ ssl3_SendClientKeyExchange(sslSocket *ss)
             PORT_SetError(SEC_ERROR_LIBRARY_FAILURE);
             break;
     }
+
+    PROBE(NSS_CRYPTO_TLS_CLIENT_KEY_EXCHANGE(connectionID, keaAlg, curveAlg, keySize));
 
     SSL_TRC(3, ("%d: SSL3[%d]: DONE sending client_key_exchange",
                 SSL_GETPID(), ss->fd));
@@ -6547,6 +6610,7 @@ done:
 SECStatus
 ssl3_SetupCipherSuite(sslSocket *ss, PRBool initHashes)
 {
+    /* NOTE: ABI Probe variables, can't change size */
     ss->ssl3.hs.suite_def = ssl_LookupCipherSuiteDef(ss->ssl3.hs.cipher_suite);
     if (!ss->ssl3.hs.suite_def) {
         PORT_Assert(0);
@@ -10384,6 +10448,13 @@ ssl3_HandleClientKeyExchange(sslSocket *ss, PRUint8 *b, PRUint32 length)
     sslKeyPair *serverKeyPair = NULL;
     SECStatus rv;
     const ssl3KEADef *kea_def;
+#ifdef NSS_HAS_PROBES
+    /* NOTE: ABI Probe variables, can't change size */
+    size_t connectionID = (size_t)ss;
+    PRUint32 keySize;
+    PRUint32 curveAlg = SEC_OID_UNKNOWN;
+    PRUint32 keaAlg;
+#endif
 
     SSL_TRC(3, ("%d: SSL3[%d]: handle client_key_exchange handshake",
                 SSL_GETPID(), ss->fd));
@@ -10413,6 +10484,9 @@ ssl3_HandleClientKeyExchange(sslSocket *ss, PRUint8 *b, PRUint32 length)
         serverKeyPair = ss->sec.serverCert->serverKeyPair;
         ss->sec.keaKeyBits = ss->sec.serverCert->serverKeyBits;
     }
+#ifdef NSS_HAS_PROBES
+    keySize = ss->sec.keaKeyBits;
+#endif
 
     if (!serverKeyPair) {
         SSL3_SendAlert(ss, alert_fatal, handshake_failure);
@@ -10426,14 +10500,24 @@ ssl3_HandleClientKeyExchange(sslSocket *ss, PRUint8 *b, PRUint32 length)
 
     switch (kea_def->exchKeyType) {
         case ssl_kea_rsa:
+#ifdef NSS_HAS_PROBES
+            keaAlg = SEC_OID_PKCS1_RSA_ENCRYPTION;
+#endif
             rv = ssl3_HandleRSAClientKeyExchange(ss, b, length, serverKeyPair);
             break;
 
         case ssl_kea_dh:
+#ifdef NSS_HAS_PROBES
+            keaAlg = SEC_OID_X942_DIFFIE_HELMAN_KEY;
+#endif
             rv = ssl3_HandleDHClientKeyExchange(ss, b, length, serverKeyPair);
             break;
 
         case ssl_kea_ecdh:
+#ifdef NSS_HAS_PROBES
+            keaAlg = SEC_OID_ANSIX962_EC_PUBLIC_KEY;
+            curveAlg = SECKEY_GetECCCurve(serverKeyPair->pubKey);
+#endif
             rv = ssl3_HandleECDHClientKeyExchange(ss, b, length, serverKeyPair);
             break;
 
@@ -10442,6 +10526,9 @@ ssl3_HandleClientKeyExchange(sslSocket *ss, PRUint8 *b, PRUint32 length)
             PORT_SetError(SEC_ERROR_UNSUPPORTED_KEYALG);
             return SECFailure;
     }
+
+    PROBE(NSS_CRYPTO_TLS_SERVER_KEY_EXCHANGE(connectionID, keaAlg, curveAlg, keySize));
+
     ssl_FreeEphemeralKeyPairs(ss);
     if (rv == SECSuccess) {
         ss->ssl3.hs.ws = ss->sec.peerCert ? wait_cert_verify : wait_change_cipher;

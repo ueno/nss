@@ -15,6 +15,7 @@
 #include "secitem.h"
 #include "secmod.h"
 #include "sslimpl.h"
+#include "sslprobes.h"
 #include "sslproto.h"
 #include "sslerr.h"
 #include "ssl3exthandle.h"
@@ -580,6 +581,14 @@ tls13_HandleKeyShare(sslSocket *ss,
     PK11SymKey *key;
     SECStatus rv;
     int keySize = 0;
+#ifdef NSS_HAS_PROBES
+    /* NOTE: ABI Probe variables, can't change size */
+    size_t connectionID = (size_t)ss;
+    PRUint32 keaKeySize;
+    PRUint32 curveAlg = SEC_OID_UNKNOWN;
+    PRUint32 keaAlg;
+    PRUint8 isServer = ss->sec.isServer;
+#endif
 
     PORT_InitCheapArena(&arena, DER_DEFAULT_CHUNKSIZE);
     peerKey = PORT_ArenaZNew(&arena.arena, SECKEYPublicKey);
@@ -597,8 +606,16 @@ tls13_HandleKeyShare(sslSocket *ss,
                                         entry->key_exchange.len,
                                         entry->group);
             mechanism = CKM_ECDH1_DERIVE;
+#ifdef NSS_HAS_PROBES
+            keaAlg = SEC_OID_ANSIX962_EC_PUBLIC_KEY;
+            if (rv == SECSuccess)
+                curveAlg = SECKEY_GetECCCurve(peerKey);
+#endif
             break;
         case ssl_kea_dh:
+#ifdef NSS_HAS_PROBES
+            keaAlg = SEC_OID_X942_DIFFIE_HELMAN_KEY;
+#endif
             rv = tls13_ImportDHEKeyShare(peerKey,
                                          entry->key_exchange.data,
                                          entry->key_exchange.len,
@@ -613,6 +630,11 @@ tls13_HandleKeyShare(sslSocket *ss,
     if (rv != SECSuccess) {
         goto loser;
     }
+#ifdef NSS_HAS_PROBES
+    keaKeySize = SECKEY_PublicKeyStrengthInBits(peerKey);
+#endif
+    PROBE(NSS_CRYPTO_TLS13_KEY_EXCHANGE(connectionID, isServer, keaAlg,
+                                        curveAlg, keaKeySize));
 
     key = PK11_PubDeriveWithKDF(
         keyPair->privKey, peerKey, PR_FALSE, NULL, NULL, mechanism,
@@ -3781,6 +3803,12 @@ tls13_SetCipherSpec(sslSocket *ss, PRUint16 epoch,
     SECStatus rv;
     ssl3CipherSpec *spec = NULL;
     ssl3CipherSpec **specp;
+#ifdef NSS_HAS_PROBES
+    /* NOTE: ABI Probe variables, can't change size */
+    size_t connectionID = (size_t)ss;
+    PRUint32 cipherAlg;
+    PRUint8 isServer = ss->sec.isServer;
+#endif
 
     /* Flush out old handshake data. */
     ssl_GetXmitBufLock(ss);
@@ -3812,6 +3840,11 @@ tls13_SetCipherSpec(sslSocket *ss, PRUint16 epoch,
     if (rv != SECSuccess) {
         goto loser;
     }
+
+#ifdef NSS_HAS_PROBES
+    cipherAlg = spec->cipherDef->oid;
+#endif
+    PROBE(NSS_CRYPTO_TLS_CIPHER(connectionID, isServer, cipherAlg));
 
     rv = tls13_InitPendingContext(ss, spec);
     if (rv != SECSuccess) {

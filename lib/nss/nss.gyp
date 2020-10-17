@@ -17,6 +17,36 @@
       ],
       'dependencies': [
         '<(DEPTH)/exports.gyp:nss_exports',
+      ],
+      'conditions': [
+        [ 'disable_dtrace!=1', {
+          'sources': [
+            '<(nssprobes_generated_o)',
+          ],
+          'actions': [
+            {
+              'msvs_cygwin_shell': 0,
+              'action': [
+                'dtrace',
+                '-s',
+                '<@(_inputs)',
+                '-G',
+                '-o',
+                '<@(_outputs)',
+              ],
+              'inputs': [
+                'nssprobes.d',
+              ],
+              'outputs': [
+                '<(nssprobes_generated_o)'
+              ],
+              'action_name': 'generate_nssprobes_o'
+            }
+          ],
+          'variables': {
+            'nssprobes_generated_o': '<(INTERMEDIATE_DIR)/nssprobes_generated.o',
+          }
+        }],
       ]
     },
     {

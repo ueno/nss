@@ -108,6 +108,7 @@
     'disable_werror%': 0,
     'disable_altivec%': 0,
     'disable_arm32_neon%': 0,
+    'disable_dtrace%': 1,
     'mozilla_client%': 0,
     'comm_client%': 0,
     'moz_fold_libs%': 0,
@@ -588,6 +589,11 @@
             'defines': [
               'NSS_DISABLE_DEPRECATED_RC2',
             ],
+          }],
+          [ 'disable_dtrace==0', {
+            'defines': [
+              'NSS_USE_DTRACE_PROBES',
+             ],
           }],
         ],
       },
